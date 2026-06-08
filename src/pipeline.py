@@ -2,105 +2,86 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import requests
-
 
 def download_data(output_dir="data"):
-    """Automatyczne pobranie przykładowego sygnału EEG z otwartego repozytorium."""
-    print("Pobieranie danych EEG z serwera...")
+    import mne
+    print("Pobieranie prawdziwych danych EEG z serwerów PhysioNet...")
+    
+    # 1. Pobieranie danych z bazy PhysioNet
+    physionet_paths = mne.datasets.eegbci.load_data(subjects=1, runs=[4], update_path=False)
+    raw = mne.io.read_raw_edf(physionet_paths[0], preload=True, verbose=False)
+    
+    # 2. Wybór centralnego kanału i wycięcie 2500 punktów
+    target_channel = 'Fcza.' if 'Fcza.' in raw.ch_names else raw.ch_names[0]
+    eeg_signal = raw.get_data(picks=target_channel)[0][:2500] * 1e6 # Skalowanie do uV
+    
+    # 3. Tworzenie czasu (osi X)
+    fs = int(raw.info['sfreq'])
+    t = np.linspace(0, len(eeg_signal) / fs, len(eeg_signal), endpoint=False)
+    
+    # 4. Budowanie DataFrame, którego oczekuje reszta programu autora
+    df = pd.DataFrame({"Time": t, "EEG_Channel_1": eeg_signal})
+    
     os.makedirs(output_dir, exist_ok=True)
     file_path = os.path.join(output_dir, "eeg_signal.txt")
-
-    # Pobieramy publicznie dostępny, oczyszczony fragment sygnału EEG (zapis jednokanałowy)
-    url = "https://raw.githubusercontent.com/jakevdp/PythonDataScienceHandbook/master/notebooks/data/BicycleWeather.csv"
-    # Powyższy URL to tylko placeholder do demonstracji mechanizmu pobierania.
-    # Wygenerujemy syntetyczny sygnał imitujący rzeczywiste badanie EEG (fazy relaksu i skupienia)
-    # aby zapewnić niezawodność potoku bez pobierania gigabajtowych plików medycznych.
-
-    # Generowanie danych imitujących EEG (częstotliwość próbkowania 250 Hz, 10 sekund)
-    fs = 250
-    t = np.linspace(0, 10, 10 * fs, endpoint=False)
-    # Sygnał zawiera szum oraz silny komponent fali Alfa (10 Hz) w pierwszej połowie i Beta (20 Hz) w drugiej
-    signal = (
-        np.sin(2 * np.pi * 10 * t) * (t < 5)
-        + np.sin(2 * np.pi * 20 * t) * (t >= 5)
-        + np.random.normal(0, 1.5, len(t))
-    )
-
-    df = pd.DataFrame({"Time": t, "EEG_Channel_1": signal})
     df.to_csv(file_path, index=False)
-    print(f"Dane zostały zapisane w: {file_path}")
+    
+    print(f"Prawdziwe dane zostały zapisane w: {file_path}")
     return df
 
-
 def preprocess_data(df):
-    """Wstępne przetwarzanie: Filtrowanie sygnału (filtrowanie średnią kroczącą)
-
-    oraz usuwanie ewentualnych braków danych.
-    """
-    print("Rozpoczęcie wstępnego przetwarzania sygnału EEG...")
-
-    # Obsługa braków danych (wymóg z wytycznych)
-    df_cleaned = df.dropna()
-
-    # Filtrowanie sygnału - wygładzanie szumu metodą średniej kroczącej (Rolling Mean)
-    # Jest to prosty filtr dolnoprzepustowy realizowany w Pandas
-    df_cleaned["EEG_Filtered"] = (
-        df_cleaned["EEG_Channel_1"].rolling(window=5, center=True).mean()
-    )
-
-    # Uzupełniamy powstałe na brzegach wartości NaN wartością sąsiednią
-    df_cleaned["EEG_Filtered"] = df_cleaned["EEG_Filtered"].bfill().ffill()
-
-    return df_cleaned
-
+    print("Rozpoczęcie wstępnego przetwarzania prawdziwego sygnału EEG...")
+    
+    # Kopia danych, aby nie psuć oryginału
+    processed_df = df.copy()
+    
+    # Filtrowanie średnią kroczącą (tak jak chciał autor)
+    window_size = 7
+    processed_df['EEG_Filtered'] = processed_df['EEG_Channel_1'].rolling(window=window_size, center=True).mean()
+    
+    # Uzupełniamy puste miejsca na brzegach po filtracji, żeby program się nie wywalił
+    processed_df.bfill(inplace=True)
+    processed_df.ffill(inplace=True)
+    
+    return processed_df
 
 def generate_statistics(df):
-    """Generowanie statystyk opisowych dla surowego i przefiltrowanego sygnału."""
-    print("\n--- STATYSTYKI OPISOWE SYGNAŁU EEG ---")
-    stats = df[["EEG_Channel_1", "EEG_Filtered"]].describe()
-    print(stats)
-    return stats
-
+    print("\n--- STATYSTYKI OPISOWE PRAWDZIWEGO SYGNAŁU EEG ---")
+    stats_df = df[['EEG_Channel_1', 'EEG_Filtered']]
+    print(stats_df.describe())
 
 def create_plots(df, output_dir="data"):
-    """Generowanie 2 wykresów: sygnału w czasie oraz porównania przed/po filtracji."""
-    print("Generowanie wykresów analizy EEG...")
+    print("Generowanie nowych wykresów z prawdziwymi danymi EEG...")
     os.makedirs(output_dir, exist_ok=True)
-
-    # Wykres 1: Przebieg sygnału w czasie (Surowy vs Przefiltrowany)
-    plt.figure(figsize=(12, 5))
-    plt.plot(
-        df["Time"][:500],
-        df["EEG_Channel_1"][:500],
-        label="Surowy sygnał (szum)",
-        alpha=0.5,
-        color="gray",
-    )
-    plt.plot(
-        df["Time"][:500],
-        df["EEG_Filtered"][:500],
-        label="Przefiltrowany sygnał",
-        color="blue",
-        linewidth=2,
-    )
-    plt.title("Analiza sygnału EEG w dziedzinie czasu (Pierwsze 2 sekundy)")
-    plt.xlabel("Czas (sekundy)")
-    plt.ylabel("Amplituda (µV)")
+    
+    # Wykres sygnału surowego i przefiltrowanego
+    plt.figure(figsize=(12, 6))
+    
+    plt.subplot(2, 1, 1)
+    plt.plot(df['Time'], df['EEG_Channel_1'], color='crimson', alpha=0.7, label='Surowy sygnał z PhysioNet')
+    plt.title("Potok Przetwarzania EEG - PRAWDZIWE DANE")
+    plt.ylabel("Amplituda [µV]")
     plt.legend()
+    plt.grid(True, linestyle='--')
+    
+    plt.subplot(2, 1, 2)
+    plt.plot(df['Time'], df['EEG_Filtered'], color='teal', label='Sygnał po filtracji (Średnia krocząca)')
+    plt.xlabel("Czas [sekundy]")
+    plt.ylabel("Amplituda [µV]")
+    plt.legend()
+    plt.grid(True, linestyle='--')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "wykres_porownawczy.png"), dpi=150)
+    plt.close()
+    
+    # Drugi wykres (sam surowy sygnał)
+    plt.figure(figsize=(12, 4))
+    plt.plot(df['Time'], df['EEG_Channel_1'], color='darkblue')
+    plt.title("Surowy zapis EEG (PhysioNet)")
+    plt.xlabel("Czas [sekundy]")
+    plt.ylabel("Amplituda [µV]")
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, "wykres_sygnalu.png"))
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "wykres_sygnalu.png"), dpi=150)
     plt.close()
-
-    # Wykres 2: Pudełkowy (Boxplot) pokazujący rozkład amplitudy przed i po filtracji
-    plt.figure(figsize=(8, 5))
-    df[["EEG_Channel_1", "EEG_Filtered"]].boxplot()
-    plt.title("Porównanie rozkładu amplitudy sygnału")
-    plt.ylabel("Amplituda (µV)")
-    plt.xticks(
-        [1, 2], ["Sygnał Surowy (z szumem)", "Sygnał Oczyszczony (Filtered)"]
-    )
-    plt.savefig(os.path.join(output_dir, "wykres_porownawczy.png"))
-    plt.close()
-
-    print(f"Wykresy zostały pomyślnie zapisane w katalogu '{output_dir}/'")
