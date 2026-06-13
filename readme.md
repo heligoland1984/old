@@ -1,4 +1,4 @@
-```markdown
+
 # Potok Przetwarzania i Oczyszczania Sygnałów EEG
 
 ## Opis projektu
@@ -32,5 +32,4 @@ pip install -r requirements.txt
 5. Uruchom program:
 ```bash
 python main.py
-```
 ```
